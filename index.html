@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Paper Portfolio</title>
+  <style>
+    :root { color-scheme: light; font: 16px system-ui, sans-serif; background: #f3f6fb; color: #172033; }
+    body { max-width: 850px; margin: 36px auto; padding: 0 18px; }
+    h1 { margin-bottom: 4px; }
+    .note { color: #56637a; margin-top: 0; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 22px 0; }
+    .card, section { background: white; border: 1px solid #e1e7ef; border-radius: 12px; padding: 18px; }
+    .label { color: #56637a; font-size: 0.9rem; }
+    .value { font-size: 1.55rem; font-weight: 700; margin-top: 5px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; border-bottom: 1px solid #e7ecf2; padding: 10px 5px; }
+    form { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+    label { display: grid; gap: 5px; color: #56637a; }
+    input, select, button { font: inherit; padding: 8px 10px; border: 1px solid #c7d0dd; border-radius: 7px; }
+    button { background: #155eef; border-color: #155eef; color: white; cursor: pointer; }
+    #message { min-height: 1.4em; }
+  </style>
+</head>
+<body>
+  <h1>Paper Portfolio</h1>
+  <p class="note">Fictional prices and paper trades only. No live market data or real money.</p>
+  <div class="cards">
+    <div class="card"><div class="label">Portfolio value</div><div class="value" id="value">Loading</div></div>
+    <div class="card"><div class="label">Available demo cash</div><div class="value" id="cash">Loading</div></div>
+    <div class="card"><div class="label">Live feed</div><div class="value" id="feed">Connecting</div></div>
+  </div>
+  <section>
+    <h2>Positions</h2>
+    <table><thead><tr><th>Symbol</th><th>Shares</th><th>Demo price</th><th>Position value</th></tr></thead><tbody id="positions"></tbody></table>
+  </section>
+  <section style="margin-top: 14px">
+    <h2>Paper trade</h2>
+    <form id="trade-form">
+      <label>Symbol<select id="symbol"><option>ACME</option><option>NORTH</option><option>GREEN</option></select></label>
+      <label>Side<select id="side"><option value="buy">Buy</option><option value="sell">Sell</option></select></label>
+      <label>Quantity<input id="quantity" type="number" min="0.01" step="0.01" value="1" required></label>
+      <button>Submit paper trade</button>
+    </form>
+    <p id="message" role="status"></p>
+  </section>
+  <script>
+    const money = amount => new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" }).format(amount);
+    async function refresh() {
+      const response = await fetch("/api/portfolio");
+      const data = await response.json();
+      document.querySelector("#value").textContent = money(data.totalValue);
+      document.querySelector("#cash").textContent = money(data.cash);
+      document.querySelector("#positions").innerHTML = data.positions.map(position =>
+        `<tr><td>${position.symbol}</td><td>${position.quantity}</td><td>${money(position.price)}</td><td>${money(position.value)}</td></tr>`
+      ).join("") || '<tr><td colspan="4">No positions yet. Try a paper trade.</td></tr>';
+    }
+    refresh();
+    const events = new EventSource("/api/events");
+    events.onopen = () => { document.querySelector("#feed").textContent = "Connected"; };
+    events.onerror = () => { document.querySelector("#feed").textContent = "Reconnecting"; };
+    events.addEventListener("prices", refresh);
+    events.addEventListener("trade", refresh);
+    document.querySelector("#trade-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      const response = await fetch("/api/trades", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+        body: JSON.stringify({
+          symbol: document.querySelector("#symbol").value,
+          side: document.querySelector("#side").value,
+          quantity: Number(document.querySelector("#quantity").value)
+        })
+      });
+      const result = await response.json();
+      document.querySelector("#message").textContent = response.ok
+        ? `${result.side} ${result.quantity} ${result.symbol} at ${money(result.price)} (paper trade)`
+        : result.error;
+      if (response.ok) refresh();
+    });
+  </script>
+</body>
+</html>
