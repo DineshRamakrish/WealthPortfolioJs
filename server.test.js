@@ -63,3 +63,34 @@ test("concurrent retries with one idempotency key execute only one paper trade",
   assert.equal(first.id, retry.id);
   assert.equal(portfolio.positions.find(position => position.symbol === "NORTH").quantity, 1);
 });
+
+test("paper trade updates stream to connected event clients", async () => {
+  const controller = new AbortController();
+  const response = await fetch(`${baseUrl}/api/events`, { signal: controller.signal });
+  assert.equal(response.headers.get("content-type").split(";")[0], "text/event-stream");
+  const reader = response.body.getReader();
+  await reader.read();
+  const decoder = new TextDecoder();
+  const eventPromise = (async () => {
+    let message = "";
+    while (!message.includes("event: trade")) {
+      const { done, value } = await reader.read();
+      assert.equal(done, false);
+      message += decoder.decode(value, { stream: true });
+    }
+    return message;
+  })();
+  try {
+    const tradeResponse = await fetch(`${baseUrl}/api/trades`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": "sse-trade-1" },
+      body: JSON.stringify({ symbol: "GREEN", side: "buy", quantity: 1 })
+    });
+    assert.equal(tradeResponse.status, 201);
+    const trade = await tradeResponse.json();
+    assert.match(await eventPromise, new RegExp(trade.id));
+  } finally {
+    controller.abort();
+    await reader.cancel().catch(() => {});
+  }
+});
